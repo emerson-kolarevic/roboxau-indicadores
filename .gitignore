@@ -1,0 +1,13 @@
+# Repo dos indicadores ZiahTrader (MA VP daytrade M5 + swing M30) -- separado do EA (roboxau).
+# Rastreia so as fontes proprias (.mq5) + Docs. Ignora compilados e exemplos padrao do MT5.
+
+# compilados
+*.ex5
+
+# exemplos/indicadores padrao do MetaTrader (nao sao nossos)
+Examples/
+Free Indicators/
+
+# Python cache (se houver toolkit aqui no futuro)
+__pycache__/
+*.pyc
