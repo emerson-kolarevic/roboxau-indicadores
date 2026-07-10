@@ -1,43 +1,61 @@
 //+------------------------------------------------------------------+
-//|                                          ZiahTrader_MA_VP.mq5    |
-//|                  Indicador MA VP -- v2.x.1 (em construcao)       |
+//|                                        ZiahTrader_MA_VP_M1.mq5    |
+//|              Indicador MA VP EXECUCAO (M1) -- v1.0                |
 //|                                                                  |
-//| Espelha o pipeline VP v2. Plota, em janela separada:             |
-//| 1 MA Start + 1 MA Ref (EMAs paralelas sobre n_sigma) + 1 VP      |
-//| Livre (VP com janela em horas, suavizacao EMA opcional) + a      |
-//| linha VP instantanea. Calibragem unica, sem COMPRA/VENDA.        |
+//| 3o tier da familia MA VP (M5 daytrade / M30 swing / M1 execucao). |
+//| Espelha a MESMA metodologia do pipeline VP v2 (perfis lambda/     |
+//| alpha, winsor 0.005/0.995, sem anualizacao, sem clip), escalada   |
+//| UM TIER ABAIXO do daytrade, para execucao/micro-timing:           |
 //|                                                                  |
-//| v2.5: janelas por ATIVO (D1 312/365 + M5 276/288 via InpAtivo),  |
-//| lambda/alpha por PERFIL (InpPerfil), winsor por toggle (InpWinsor)|
-//| sobre os quantis kWinsor_*. 17 OBJ_HLINE de referencia (-8 a +8   |
-//| sigma) desenhadas em runtime, sempre ativas.                     |
+//|   DAYTRADE (M5)            ->  EXECUCAO (M1)                      |
+//|   sigma_hist: EWMA D1      ->  EWMA H1 (horario, 8 pregoes)       |
+//|   sigma_real: std M5 (24h) ->  std M1 (1 hora)                    |
+//|   retorno:    ret_24h      ->  ret_1h                             |
+//|   n_sigma = ret_1h / sigma_final_horario                          |
 //|                                                                  |
-//| PRICE NOW na vela corrente: midprice live via SymbolInfoTick     |
-//| (espelha modulo 20 v2 do EA). Barras historicas usam o close M5. |
-//| Gate de cadencia na vela corrente (kSampleIntervalSec): entre    |
-//| amostras o indicador reusa os ultimos valores calculados.        |
+//| Plota, em janela separada: VP instantaneo (execucao) + MA Start   |
+//| + MA Ref (EMAs paralelas sobre n_sigma) + VP Livre opcional.      |
+//| 17 OBJ_HLINE de referencia (-8..+8 sigma).                        |
 //|                                                                  |
-//| REASON_PARAMETERS / RECOMPILE / CHARTCHANGE forcam full recalc   |
-//| no proximo OnCalculate (senao as linhas somem ao trocar          |
-//| calibragem). Gate MTF retorna prev_calculated (nao 0) p/ nao     |
-//| apagar o ja calculado. OnDeinit so deleta OBJ_HLINE em           |
-//| REMOVE/PROGRAM/CLOSE.                                            |
+//| >>> CONTAGEM DE CANDLES (regra #1 Emerson, medida pelo terminal   |
+//| via ZT_DiagContagemCandles v1.1, 2026-07-09, Exness-MT5Trial11):  |
+//| H1 sigma_hist (8 pregoes) = XAU 184 (8 x 23 H1/pregao CHEIO) |    |
+//| BTC 192 (8 x 24, medido exato). M1 em 1h = 60 nos DOIS ativos     |
+//| (XAU mediu 59.9 -- horas cheias de M1; flip nao atua aqui).       |
+//| NOTA: a media da semana medida em 2026-07-09 (18.5 H1/pregao)     |
+//| estava distorcida pelo feriado de 4 de julho + domingo parcial;   |
+//| o criterio e o pregao CHEIO (23 H1 = 276 M5 / 12), o mesmo com    |
+//| que o 276 do daytrade foi cadastrado.                             |
 //|                                                                  |
-//| Standalone -- nao depende de nenhum modulo do EA.                |
+//| Ruido esperado: com ~60 amostras M1, o sigma_real e mais nervoso  |
+//| que nos tiers irmaos (276/230 amostras) e o winsor e quase        |
+//| inerte no lado M1 (0.005*60 nao apara nada) -- a protecao contra  |
+//| outlier vem do lado H1. Comportamento aceito p/ sensor de         |
+//| execucao (decisao Emerson 2026-07-09).                            |
+//|                                                                  |
+//| PRICE NOW na vela corrente: midprice live via SymbolInfoTick.     |
+//| Barras historicas usam o close M1. Gate de cadencia 60s (M1).     |
+//|                                                                  |
+//| Papel operacional (camada futura): M30 + M5 dao o corredor        |
+//| (convergencia); o M1 navega o corredor buscando micro pullbacks.  |
+//| Nesta versao: validacao VISUAL apenas.                            |
+//|                                                                  |
+//| Standalone -- nao depende de nenhum modulo do EA. Para rodar no   |
+//| GRAFICO M1. Calibragem unica (sem COMPRA/VENDA).                  |
 //+------------------------------------------------------------------+
 #property copyright   "Ziah Trader"
 #property link        "https://ziahtrader.com"
-#property version     "2.50"
-#property description "VP (n_sigma 24h) + MA Start + MA Ref + VP Livre"
-#property description "Calibragem unica universal (sem direcao COMPRA/VENDA)"
-#property description "v2.5: flip ativo OURO/BITCOIN (D1+M5) + perfil de risco + winsor toggle. 8 inputs"
+#property version     "1.00"
+#property description "MA VP EXECUCAO (M1): VP (n_sigma 1h / vol horaria) + MA Start + MA Ref + VP Livre"
+#property description "Espelha o pipeline VP v2, escalado p/ execucao (H1 8 pregoes + M1 + ret_1h)"
+#property description "v1.0: flip de ativo OURO/BITCOIN (H1 184/192) + perfil de risco + winsor toggle. Rodar no M1"
 
 #property indicator_separate_window
 #property indicator_buffers 4
 #property indicator_plots   4
 
-//---- Plot 0: VP instantaneo (cinza pontilhado, opacidade baixa)
-#property indicator_label1  "VP"
+//---- Plot 0: VP instantaneo execucao (cinza pontilhado)
+#property indicator_label1  "VP_M1"
 #property indicator_type1   DRAW_LINE
 #property indicator_color1  clrSilver
 #property indicator_style1  STYLE_DOT
@@ -57,38 +75,29 @@
 #property indicator_style3  STYLE_SOLID
 #property indicator_width3  2
 
-//---- Plot 3: VP Livre (laranja tracejado) -- VP com janela livre em horas
+//---- Plot 3: VP Livre (laranja tracejado)
 #property indicator_label4  "VP Livre"
 #property indicator_type4   DRAW_LINE
 #property indicator_color4  clrOrange
 #property indicator_style4  STYLE_DASH
 #property indicator_width4  2
 
-// As 17 linhas horizontais de referencia (-8 a +8 sigma) sao criadas
-// em runtime como OBJ_HLINE no _CreateRefLinesInSubwin (chamado pelo
-// OnCalculate na primeira passagem com subjanela registrada). Nao usamos
-// #property indicator_level porque eles forcam o auto-scale do eixo Y a
-// incluir todo o range, comprimindo as MAs em TFs maiores. OBJ_HLINE e
-// puramente visual -- nao influencia auto-scale.
-
 //+------------------------------------------------------------------+
-//| FLIP DE ATIVO (regra #1: contagem perfeitamente correspondente    |
-//| ao ativo). Chave unica que ajusta TODAS as janelas do daytrade:   |
-//|   D1 sigma_hist (1 ano)  : BTC=365 (7/sem) | XAU=312 (6/sem, com  |
-//|                            domingo parcial)                        |
-//|   M5 janela 24h          : BTC=288 (24/7)  | XAU=276 (~23h pregao) |
-//| Contagens medidas pelo terminal (ZT_DiagContagemCandles 2026-06-29).|
+//| FLIP DE ATIVO (regra #1: contagem perfeitamente correspondente).  |
+//| Neste tier o flip atua SO no sigma_hist H1 (8 pregoes):           |
+//|   H1 8 pregoes : BTC=192 (8x24, 24/7) | XAU=184 (8x23, pregao     |
+//|                  cheio de 23h)                                     |
+//| Janela M1 de 1h = 60 nos DOIS ativos (medido 59.9/60.0) -> fixa.  |
+//| Contagens medidas pelo terminal (ZT_DiagContagemCandles 2026-07-09).|
 //+------------------------------------------------------------------+
 enum ZT_Ativo
 {
-   ATIVO_OURO     = 0,   // OURO (XAU) -- com gaps (D1=312/ano, M5=276/24h)
-   ATIVO_BITCOIN  = 1    // BITCOIN -- 24h/7d sem gaps (D1=365/ano, M5=288/24h)
+   ATIVO_OURO     = 0,   // OURO (XAU) -- com gaps (H1 8 pregoes=184)
+   ATIVO_BITCOIN  = 1    // BITCOIN -- 24h/7d sem gaps (H1 8 pregoes=192)
 };
 
 //+------------------------------------------------------------------+
 //| PERFIL DE RISCO (lambda EWMA / alpha hibrido) -- da NIX.          |
-//| Agressivo (default): pega o movimento antes (+ falsos positivos). |
-//| Conservador: atrasa a entrada (- falsos, + chance de stop tarde). |
 //+------------------------------------------------------------------+
 enum ZT_Perfil
 {
@@ -100,43 +109,41 @@ enum ZT_Perfil
 
 //+------------------------------------------------------------------+
 //| Inputs do usuario (8 totais, 1 grupo unico)                       |
+//| Defaults canonicos (Emerson 2026-07-09): tier M1 usa MA 4/10      |
+//| (mais curtas que o 6/18 dos tiers M5/M30 -- sensor de execucao);  |
+//| VP Livre off (0/0).                                                |
 //+------------------------------------------------------------------+
-input group "=== Calibragem MAs VP ==="
+input group "=== Calibragem MA VP Execucao (M1) ==="
 input ZT_Ativo  InpAtivo      = ATIVO_OURO;       // Ativo: OURO (gaps) / BITCOIN (24h7d)
 input ZT_Perfil InpPerfil     = PERFIL_AGRESSIVO; // Perfil de risco (lambda/alpha)
 input bool InpWinsor          = true;   // Winsor (apara outliers de gap/spike no sigma)
-input int  InpMA_Start_Period = 14;     // MA Start: periodo (0=off)
-input int  InpMA_Ref_Period   = 0;      // MA Referencia: periodo (0=off)
-input int  InpVP_Livre_Hours  = 23;     // VP Livre: janela em horas (0=off)
-input int  InpVP_Livre_Smooth = 15;     // VP Livre: suavizacao EMA (0=off)
+input int  InpMA_Start_Period = 4;      // MA Start: periodo EMA sobre n_sigma execucao (0=off)
+input int  InpMA_Ref_Period   = 10;     // MA Ref: periodo EMA sobre n_sigma execucao (0=off)
+input int  InpVP_Livre_Hours  = 0;      // VP Livre: janela em horas (0=off) -- M1: 60 candles/h
+input int  InpVP_Livre_Smooth = 0;      // VP Livre: suavizacao EMA (0=off)
 input bool InpShow_Lines      = true;   // Exibir linhas
 
 //+------------------------------------------------------------------+
-//| Constantes internas (espelham modulo 20 v2 + 28 do EA)            |
+//| Constantes internas (espelham pipeline VP v2 -- iguais aos irmaos)|
 //+------------------------------------------------------------------+
-const int    kD1_Ouro            = 312;      // D1/ano OURO (6/sem, inclui domingo parcial)
-const int    kD1_Bitcoin         = 365;      // D1/ano BITCOIN (7/sem, 24/7)
-const double kWinsor_Lower       = 0.005;    // quantil inferior winsor
-const double kWinsor_Upper       = 0.995;    // quantil superior winsor
-const int    kM5_Win_Ouro        = 276;      // janela M5 24h no OURO (gaps: ~23h pregao/dia)
-const int    kM5_Win_Bitcoin     = 288;      // janela M5 24h no BITCOIN (24/7, sem gaps)
-const int    kSampleIntervalSec  = 300;      // gate de cadencia na vela corrente
+const int    kH1_Ouro           = 184;      // H1 em 8 pregoes no OURO (8 x 23 H1/pregao cheio)
+const int    kH1_Bitcoin        = 192;      // H1 em 8 pregoes no BITCOIN (8 x 24, 24/7)
+const int    kM1_1h             = 60;       // janela 1h em M1 -- IGUAL nos 2 ativos (medido)
+const double kWinsor_Lower      = 0.005;    // quantil inferior winsor
+const double kWinsor_Upper      = 0.995;    // quantil superior winsor
+const int    kSampleIntervalSec = 60;       // gate de cadencia na vela corrente (M1 = 1min)
 
-#define VP_NMIN_D1   30          // minimo de retornos D1 para EWMA
-#define VP_NMIN_M5   200         // minimo de retornos M5 winsorizados
+#define VP_NMIN_H1   30          // minimo de retornos H1 para EWMA horario
+#define VP_NMIN_M1   50          // minimo de retornos M1 winsorizados (1h)
 #define VP_INVALID   DBL_MAX     // sentinel de valor invalido
 #define VP_EPS       1e-12       // piso numerico para sigma_final
 
 //+------------------------------------------------------------------+
-//| OBJ_HLINE de referencia (sempre ativas, -8 a +8 sigma)            |
-//|                                                                    |
-//| O prefixo inclui o indice da sub-janela (ex: ZTMAVP_REF_W1_3)     |
-//| para suportar 2+ instancias do indicador no mesmo chart sem que   |
-//| uma encontre os objetos da outra via ObjectFind e deixe a propria |
-//| sub-janela sem HLINEs.                                             |
+//| OBJ_HLINE de referencia (-8 a +8 sigma). Prefixo proprio do M1    |
+//| (nao colide com os indicadores M5/M30 no mesmo chart).            |
 //+------------------------------------------------------------------+
-#define ZTMAVP_REF_PREFIX_BASE "ZTMAVP_REF_W"
-#define ZTMAVP_REF_COUNT       17      // -8..+8 sigma (inclusivo)
+#define ZTMAVPM1_REF_PREFIX_BASE "ZTMAVPM1_REF_W"
+#define ZTMAVPM1_REF_COUNT       17      // -8..+8 sigma (inclusivo)
 
 //+------------------------------------------------------------------+
 //| Buffers de plot (4 totais)                                         |
@@ -147,25 +154,24 @@ double BufMA_Ref[];
 double BufVP_Livre[];
 
 //+------------------------------------------------------------------+
-//| Estado interno -- working copies dos inputs apos validacao R4-R6  |
+//| Estado interno -- working copies dos inputs apos validacao         |
 //+------------------------------------------------------------------+
-int  s_ma_start_eff = 0;
-int  s_ma_ref_eff   = 0;
-int    s_m5_window  = 288;   // janela M5 24h efetiva (setada em OnInit pelo InpAtivo)
-int    s_d1_ewma    = 365;   // barras D1 do sigma_hist (setada pelo InpAtivo)
-double s_lambda     = 0.92;  // lambda EWMA efetivo (setado pelo InpPerfil)
-double s_alpha      = 0.55;  // alpha hibrido efetivo (setado pelo InpPerfil)
-bool   s_winsor     = true;  // aplica winsor? (setado pelo InpWinsor)
+int    s_ma_start_eff = 0;
+int    s_ma_ref_eff   = 0;
+int    s_exec_window  = 0;   // janela M1 (1h) efetiva (kM1_1h -- sem flip)
+int    s_h1_ewma_bars = 0;   // barras H1 para sigma_hist horario (setada pelo InpAtivo)
+double s_lambda       = 0.92;// lambda EWMA efetivo (setado pelo InpPerfil)
+double s_alpha        = 0.55;// alpha hibrido efetivo (setado pelo InpPerfil)
+bool   s_winsor       = true;// aplica winsor? (setado pelo InpWinsor)
 
 //+------------------------------------------------------------------+
-//| Cache D1 (sigma_hist por dia D1).                                  |
-//| Nao causa divergencia EA vs indicador.                             |
+//| Cache H1 (sigma_hist por hora H1)                                  |
 //+------------------------------------------------------------------+
-datetime g_cache_d1_key      = 0;
+datetime g_cache_h1_key      = 0;
 double   g_cache_sigma_hist  = VP_INVALID;
 
 //+------------------------------------------------------------------+
-//| Gate 300s na vela corrente + statics dos ultimos valores           |
+//| Gate na vela corrente + statics dos ultimos valores                |
 //+------------------------------------------------------------------+
 datetime s_last_sample_ts  = 0;
 double   s_last_vp         = EMPTY_VALUE;
@@ -174,12 +180,7 @@ double   s_last_ma_ref     = EMPTY_VALUE;
 double   s_last_vp_livre   = EMPTY_VALUE;
 
 //+------------------------------------------------------------------+
-//| VP Livre -- janela em candles M5 pre-calculada em OnInit           |
-//| (12 candles M5 = 1 hora). 0 = VP Livre desligado.                  |
-//| Cap defensivo: 720h (30 dias) -- evita window > rates_total.      |
-//|                                                                    |
-//| Suavizacao EMA opcional: s_vp_livre_alpha = 2/(N+1) quando         |
-//| InpVP_Livre_Smooth > 0. 0.0 = sem suavizacao (valor cru).          |
+//| VP Livre -- janela em candles M1 (60 candles = 1 hora)            |
 //+------------------------------------------------------------------+
 int    s_vp_livre_window = 0;
 double s_vp_livre_alpha  = 0.0;   // 0.0 = sem suavizacao
@@ -187,19 +188,17 @@ double s_vp_livre_alpha  = 0.0;   // 0.0 = sem suavizacao
 //+------------------------------------------------------------------+
 //| Recalculo forcado + flag de reset por REASON_PARAMETERS et al     |
 //+------------------------------------------------------------------+
-bool     g_hadGaps           = false;
+bool     g_hadGaps            = false;
 datetime g_lastFullRecalcTime = 0;
 #define  RECALC_THROTTLE_SEC  5
 
-bool     s_need_full_reset   = true;  // primeira carga forca full recalc
-bool     g_chart_is_m5       = false; // setado em OnInit, otimizacao shift M5
-int      g_subwin_idx        = -1;    // setado em _CreateRefLinesInSubwin
+bool     s_need_full_reset = true;   // primeira carga forca full recalc
+bool     g_chart_is_m1     = false;  // setado em OnInit, otimizacao shift M1
+int      g_subwin_idx      = -1;     // setado em _CreateRefLinesInSubwin
 
 //+------------------------------------------------------------------+
-//| Helpers numericos -- identicos aos do modulo 20 v2 do EA          |
+//| Helpers numericos -- identicos aos indicadores M5/M30 (VP v2)     |
 //+------------------------------------------------------------------+
-
-// pct_change: out[i] = in[i]/in[i-1] - 1.  out[0] = VP_INVALID.
 void _PctChange(const double &in[], double &out[], const int n)
 {
    ArrayResize(out, n, n);
@@ -216,7 +215,6 @@ void _PctChange(const double &in[], double &out[], const int n)
    }
 }
 
-// quantil com interpolacao linear sobre array ordenado, ignorando VP_INVALID.
 double _Quantile(const double &in[], const int n_in, const double q)
 {
    if(n_in <= 0) return VP_INVALID;
@@ -241,7 +239,6 @@ double _Quantile(const double &in[], const int n_in, const double q)
    return tmp[lo] + frac * (tmp[hi] - tmp[lo]);
 }
 
-// winsor: clip(in[], q_low_value, q_high_value).
 void _Winsor(const double &in[], double &out[], const int n,
              const double qlow, const double qhigh, const int n_min)
 {
@@ -277,7 +274,6 @@ void _MaybeWinsor(const double &in[], double &out[], const int n, const int n_mi
    for(int i = 0; i < n; i++) out[i] = in[i];
 }
 
-// std amostral (ddof=1) ignorando VP_INVALID.
 double _StdSample(const double &in[], const int n_in)
 {
    if(n_in <= 0) return VP_INVALID;
@@ -303,7 +299,6 @@ double _StdSample(const double &in[], const int n_in)
    return MathSqrt(var);
 }
 
-// EWMA RiskMetrics com var_0 = 0 (padrao Portal v2).
 double _EwmaSigmaVar0(const double &returns[], const int n, const double lambda)
 {
    if(n < 1) return VP_INVALID;
@@ -323,7 +318,7 @@ double _EwmaSigmaVar0(const double &returns[], const int n, const double lambda)
 //+------------------------------------------------------------------+
 void _ResetCaches()
 {
-   g_cache_d1_key     = 0;
+   g_cache_h1_key     = 0;
    g_cache_sigma_hist = VP_INVALID;
 }
 
@@ -337,49 +332,35 @@ void _ResetLastSampleStatics()
 }
 
 //+------------------------------------------------------------------+
-//| Validacao admin -- espelha modulo 28 do EA (apenas paralelas).    |
-//|                                                                    |
-//| R4: periodo ativo deve ser >= 2 (warn).                            |
-//| R5: paralelas com Start >= Ref (BLOCK esperado, warn).            |
-//| R6: MA inteira zerada (Start E Ref = 0) -> warn.                  |
-//|                                                                    |
-//| Retorna true se pelo menos um slot MA (Start ou Ref) esta ativo.  |
+//| Validacao admin (espelha M5/M30: apenas paralelas).               |
 //+------------------------------------------------------------------+
 bool _ApplyAdminRules()
 {
    s_ma_start_eff = InpMA_Start_Period;
    s_ma_ref_eff   = InpMA_Ref_Period;
 
-   // R4 -- periodos ativos abaixo de 2 sao atipicos
    if(s_ma_start_eff > 0 && s_ma_start_eff < 2)
-      PrintFormat("[ZTMAVP] R4 MA Start=%d < 2 (valor atipico)", s_ma_start_eff);
+      PrintFormat("[ZTMAVP_M1] R4 MA Start=%d < 2 (valor atipico)", s_ma_start_eff);
    if(s_ma_ref_eff > 0 && s_ma_ref_eff < 2)
-      PrintFormat("[ZTMAVP] R4 MA Ref=%d < 2 (valor atipico)", s_ma_ref_eff);
+      PrintFormat("[ZTMAVP_M1] R4 MA Ref=%d < 2 (valor atipico)", s_ma_ref_eff);
 
-   // R5 -- paralelas com Start >= Ref -> BLOCK permanente esperado
    if(s_ma_start_eff > 0 && s_ma_ref_eff > 0
       && s_ma_start_eff >= s_ma_ref_eff)
-      PrintFormat("[ZTMAVP] R5 paralelas: Start=%d >= Ref=%d (gate em BLOCK esperado)",
+      PrintFormat("[ZTMAVP_M1] R5 paralelas: Start=%d >= Ref=%d (gate em BLOCK esperado)",
                   s_ma_start_eff, s_ma_ref_eff);
 
-   // R6 -- nenhuma MA ativa
    const bool any_active = (s_ma_start_eff > 0 || s_ma_ref_eff > 0);
    if(!any_active)
-      Print("[ZTMAVP] R6: nenhum slot MA ativo");
+      Print("[ZTMAVP_M1] R6: nenhum slot MA ativo");
 
    return any_active;
 }
 
-//+------------------------------------------------------------------+
-//| Getters de periodos efetivos                                       |
-//+------------------------------------------------------------------+
 int _GetMAStartPeriod() { return s_ma_start_eff; }
 int _GetMARefPeriod()   { return s_ma_ref_eff;   }
 
 //+------------------------------------------------------------------+
 //| _GetCurrentPrice -- midprice live na vela corrente.               |
-//| Espelha bloco SymbolInfoTick do modulo 20 v2 do EA. Fallback     |
-//| para o close da vela se nenhum tick valido.                       |
 //+------------------------------------------------------------------+
 double _GetCurrentPrice(const double fallback)
 {
@@ -395,29 +376,14 @@ double _GetCurrentPrice(const double fallback)
 
 //+------------------------------------------------------------------+
 //| OBJ_HLINE de referencia (sigmas -8 a +8)                          |
-//|                                                                    |
-//| Niveis cobrem range tipico do VP em eventos extremos. Estilo      |
-//| uniforme (clrSilver, STYLE_DOT, width 1, BACK, HIDDEN).            |
 //+------------------------------------------------------------------+
 void _CreateRefLinesInSubwin(const int subwin)
 {
-   g_subwin_idx = subwin;   // memoriza para _DeleteRefLines
+   g_subwin_idx = subwin;
 
-   // Cleanup transitivo: HLINEs de schema antigo (nome sem subwin) ficam
-   // orfas e sobrepoem visualmente as novas na sub-janela. Removemos 1x na
-   // criacao -- idempotente e barato apos primeira passagem.
-   for(int i = 0; i < ZTMAVP_REF_COUNT; i++)
-      ObjectDelete(0, StringFormat("ZTMAVP_ref_%d", i));
-
-   // Cleanup transitivo: OBJ_TEXT "_LBL" (labels sigma dentro do plot, nao
-   // usados neste build -- operador le o valor sigma via crosshair do MT5).
-   for(int i = 0; i < ZTMAVP_REF_COUNT; i++)
-      ObjectDelete(0,
-         StringFormat("%s%d_%d_LBL", ZTMAVP_REF_PREFIX_BASE, subwin, i));
-
-   for(int i = 0; i < ZTMAVP_REF_COUNT; i++)
+   for(int i = 0; i < ZTMAVPM1_REF_COUNT; i++)
    {
-      const string name  = StringFormat("%s%d_%d", ZTMAVP_REF_PREFIX_BASE, subwin, i);
+      const string name  = StringFormat("%s%d_%d", ZTMAVPM1_REF_PREFIX_BASE, subwin, i);
       const double level = (double)(i - 8);   // i=0 -> -8 ; i=16 -> +8
 
       if(ObjectFind(0, name) < 0)
@@ -434,19 +400,14 @@ void _CreateRefLinesInSubwin(const int subwin)
 
 void _DeleteRefLines()
 {
-   if(g_subwin_idx < 0) return;   // HLINEs nunca foram criadas
-   for(int i = 0; i < ZTMAVP_REF_COUNT; i++)
+   if(g_subwin_idx < 0) return;
+   for(int i = 0; i < ZTMAVPM1_REF_COUNT; i++)
       ObjectDelete(0,
-         StringFormat("%s%d_%d", ZTMAVP_REF_PREFIX_BASE, g_subwin_idx, i));
+         StringFormat("%s%d_%d", ZTMAVPM1_REF_PREFIX_BASE, g_subwin_idx, i));
 }
 
 //+------------------------------------------------------------------+
 //| OnInit                                                             |
-//|                                                                    |
-//| Detecta UninitializeReason() para tratar REASON_PARAMETERS /      |
-//| RECOMPILE / CHARTCHANGE. Em todos esses casos, statics sao         |
-//| zeradas e g_hadGaps=true para forcar full recalc no proximo        |
-//| OnCalculate (senao as linhas somem ao trocar calibragem).          |
 //+------------------------------------------------------------------+
 int OnInit()
 {
@@ -454,7 +415,7 @@ int OnInit()
    s_need_full_reset = (reason_prev == REASON_PARAMETERS
                      || reason_prev == REASON_RECOMPILE
                      || reason_prev == REASON_CHARTCHANGE
-                     || reason_prev == 0);   // primeira carga
+                     || reason_prev == 0);
 
    if(s_need_full_reset)
    {
@@ -464,13 +425,26 @@ int OnInit()
       g_lastFullRecalcTime = 0;
    }
 
-   // B3: cache de "chart e M5?" para shift aritmetico no OnCalculate
-   g_chart_is_m5 = (_Period == PERIOD_M5);
+   g_chart_is_m1 = (_Period == PERIOD_M1);
+   if(!g_chart_is_m1)
+      Print("[ZTMAVP_M1] AVISO: indicador desenhado para o grafico M1 -- TF atual difere de M1");
 
-   // Flip de ativo -> TODAS as janelas do daytrade (M5 24h + D1 sigma_hist 1 ano)
+   SetIndexBuffer(0, BufVP,        INDICATOR_DATA);
+   SetIndexBuffer(1, BufMA_Start,  INDICATOR_DATA);
+   SetIndexBuffer(2, BufMA_Ref,    INDICATOR_DATA);
+   SetIndexBuffer(3, BufVP_Livre,  INDICATOR_DATA);
+
+   for(int i = 0; i < 4; i++)
+      PlotIndexSetDouble(i, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+
+   if(!_ApplyAdminRules())
+      Print("[ZTMAVP_M1] WARN: nenhuma MA ativa -- indicador nao plotara MA Start/Ref");
+
+   // Flip de ativo -> sigma_hist H1 8 pregoes (OURO 184 / BITCOIN 192).
+   // Janela M1 de 1h = 60 nos dois ativos (medido) -- sem flip.
    const bool is_btc = (InpAtivo == ATIVO_BITCOIN);
-   s_m5_window = is_btc ? kM5_Win_Bitcoin : kM5_Win_Ouro;
-   s_d1_ewma   = is_btc ? kD1_Bitcoin     : kD1_Ouro;
+   s_h1_ewma_bars = is_btc ? kH1_Bitcoin : kH1_Ouro;
+   s_exec_window  = kM1_1h;
 
    // Perfil de risco -> lambda EWMA / alpha hibrido (NIX)
    switch(InpPerfil)
@@ -485,33 +459,17 @@ int OnInit()
    // Toggle winsor
    s_winsor = InpWinsor;
 
-   SetIndexBuffer(0, BufVP,        INDICATOR_DATA);
-   SetIndexBuffer(1, BufMA_Start,  INDICATOR_DATA);
-   SetIndexBuffer(2, BufMA_Ref,    INDICATOR_DATA);
-   SetIndexBuffer(3, BufVP_Livre,  INDICATOR_DATA);
-
-   for(int i = 0; i < 4; i++)
-      PlotIndexSetDouble(i, PLOT_EMPTY_VALUE, EMPTY_VALUE);
-
-   // Validar inputs admin (R4-R6). Idempotente.
-   if(!_ApplyAdminRules())
-      Print("[ZTMAVP] WARN: nenhuma MA ativa -- indicador nao plotara MA Start/Ref");
-
-   // VP Livre -- validacao + pre-calculo da janela em candles M5 (12 = 1h)
+   // VP Livre -- janela em candles M1 (60 = 1h)
    if(InpVP_Livre_Hours > 720)
-      PrintFormat("[ZTMAVP] WARN VP_Livre_Hours=%d > 720 -- forcado para 720",
-                  InpVP_Livre_Hours);
+      PrintFormat("[ZTMAVP_M1] WARN VP_Livre_Hours=%d > 720 -- forcado para 720", InpVP_Livre_Hours);
    const int vp_h = (int)MathMax(0, MathMin(720, InpVP_Livre_Hours));
-   s_vp_livre_window = (vp_h > 0) ? vp_h * 12 : 0;
+   s_vp_livre_window = (vp_h > 0) ? vp_h * 60 : 0;
 
-   // VP Livre -- suavizacao EMA opcional (alpha = 2/(N+1)). 0 = off (valor cru)
    const int smooth = (int)MathMax(0, InpVP_Livre_Smooth);
    if(smooth > 0 && smooth < 2)
-      PrintFormat("[ZTMAVP] WARN VP_Livre_Smooth=%d < 2 (periodo EMA atipico)", smooth);
+      PrintFormat("[ZTMAVP_M1] WARN VP_Livre_Smooth=%d < 2 (periodo EMA atipico)", smooth);
    s_vp_livre_alpha = (smooth > 0) ? 2.0 / ((double)smooth + 1.0) : 0.0;
 
-   // Aplicar toggle de exibicao -- idempotente (re-aplica em todo OnInit
-   // para garantir que mudancas de input revertam DRAW_NONE para DRAW_LINE).
    const bool show_start = InpShow_Lines && (_GetMAStartPeriod() > 0);
    const bool show_ref   = InpShow_Lines && (_GetMARefPeriod()   > 0);
    const bool show_vpl   = InpShow_Lines && (s_vp_livre_window   > 0);
@@ -527,23 +485,20 @@ int OnInit()
 
    IndicatorSetInteger(INDICATOR_DIGITS, 4);
    IndicatorSetString(INDICATOR_SHORTNAME,
-      StringFormat("ZT_MA_VP v2.5 [%s %s%s %d/%d m5=%d d1=%d]",
+      StringFormat("ZT_MA_VP_M1 v1.0 [%s %s%s %d/%d m1=%d H1=%d]",
                    ativo_str, perfil_str, (s_winsor ? "+w" : ""),
-                   _GetMAStartPeriod(), _GetMARefPeriod(), s_m5_window, s_d1_ewma));
+                   _GetMAStartPeriod(), _GetMARefPeriod(), s_exec_window, s_h1_ewma_bars));
 
-   // Observabilidade: 1 linha de resumo final de config
-   PrintFormat("[ZT_MA_VP] v2.5 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s | M5_24h=%d D1_1ano=%d | MA %d/%d | VP_Livre=%dh s%d",
+   PrintFormat("[ZTMAVP_M1] v1.0 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s | M1_1h=%d H1_8preg=%d | MA %d/%d | VP_Livre=%dh s%d",
                ativo_str, perfil_str, s_lambda, s_alpha, (s_winsor ? "ON" : "OFF"),
-               s_m5_window, s_d1_ewma,
+               s_exec_window, s_h1_ewma_bars,
                _GetMAStartPeriod(), _GetMARefPeriod(), vp_h, smooth);
 
    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
-//| OnDeinit -- so deleta OBJ_HLINE em REMOVE/PROGRAM/CLOSE.          |
-//| Em REASON_PARAMETERS / RECOMPILE / CHARTCHANGE preserva os        |
-//| objetos no chart (sao re-aproveitados via ObjectFind no recriar). |
+//| OnDeinit                                                           |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
@@ -556,109 +511,96 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-//| sigma_hist as-of timestamp t (cache por dia D1)                     |
-//|                                                                    |
-//| Cache so guarda resultados VALIDOS.                                |
+//| sigma_hist as-of timestamp t (cache por hora H1)                   |
+//| EWMA RiskMetrics sobre retornos H1 winsorizados.                   |
 //+------------------------------------------------------------------+
 double _SigmaHistAsOf(const datetime t)
 {
-   const int shift_d1 = iBarShift(_Symbol, PERIOD_D1, t, false);
-   if(shift_d1 < 0) return VP_INVALID;
+   const int shift_h1 = iBarShift(_Symbol, PERIOD_H1, t, false);
+   if(shift_h1 < 0) return VP_INVALID;
 
-   const datetime d1_key = (datetime)iTime(_Symbol, PERIOD_D1, shift_d1);
-   if(d1_key <= 0) return VP_INVALID;
+   const datetime h1_key = (datetime)iTime(_Symbol, PERIOD_H1, shift_h1);
+   if(h1_key <= 0) return VP_INVALID;
 
-   if(d1_key == g_cache_d1_key && g_cache_sigma_hist != VP_INVALID)
+   if(h1_key == g_cache_h1_key && g_cache_sigma_hist != VP_INVALID)
       return g_cache_sigma_hist;
 
-   MqlRates rates_d1[];
-   const int copied = CopyRates(_Symbol, PERIOD_D1, shift_d1, s_d1_ewma, rates_d1);
-   if(copied < VP_NMIN_D1 + 2) return VP_INVALID;
+   MqlRates rates_h1[];
+   const int copied = CopyRates(_Symbol, PERIOD_H1, shift_h1, s_h1_ewma_bars, rates_h1);
+   if(copied < VP_NMIN_H1 + 2) return VP_INVALID;
 
-   const int n_d1 = copied - 1;   // exclui o D1 que contem t (pattern v2 Portal)
-   if(n_d1 < VP_NMIN_D1) return VP_INVALID;
+   const int n_h1 = copied - 1;   // exclui a H1 que contem t (pattern v2 Portal)
+   if(n_h1 < VP_NMIN_H1) return VP_INVALID;
 
-   double closes_d1[];
-   ArrayResize(closes_d1, n_d1, n_d1);
-   for(int i = 0; i < n_d1; i++)
-      closes_d1[i] = rates_d1[i].close;
+   double closes_h1[];
+   ArrayResize(closes_h1, n_h1, n_h1);
+   for(int i = 0; i < n_h1; i++)
+      closes_h1[i] = rates_h1[i].close;
 
-   double rets_d1[];
-   _PctChange(closes_d1, rets_d1, n_d1);
+   double rets_h1[];
+   _PctChange(closes_h1, rets_h1, n_h1);
 
-   double rets_d1_w[];
-   _MaybeWinsor(rets_d1, rets_d1_w, n_d1, VP_NMIN_D1);
+   double rets_h1_w[];
+   _MaybeWinsor(rets_h1, rets_h1_w, n_h1, VP_NMIN_H1);
 
-   const double sigma = _EwmaSigmaVar0(rets_d1_w, n_d1, s_lambda);
+   const double sigma = _EwmaSigmaVar0(rets_h1_w, n_h1, s_lambda);
    if(sigma == VP_INVALID || sigma <= 0.0) return VP_INVALID;
 
-   g_cache_d1_key     = d1_key;
+   g_cache_h1_key     = h1_key;
    g_cache_sigma_hist = sigma;
    return sigma;
 }
 
 //+------------------------------------------------------------------+
-//| n_sigma_raw as-of timestamp t. SEM cache M5: recalcula sempre      |
-//| (cache por m5_key causaria divergencia EA vs indicador).           |
-//|                                                                    |
-//| price_now:                                                         |
-//|   - is_current_bar = true  -> midprice live via _GetCurrentPrice  |
-//|   - is_current_bar = false -> close da vela M5 (closes_m5[N-1])   |
-//|                                                                    |
-//| shift_m5_hint >= 0 evita o iBarShift quando o chart e M5 e         |
-//| podemos derivar o shift por aritmetica de indice.                  |
-//|                                                                    |
-//| out_sigma_final e out_price_now sao expostos para reuso pelo       |
-//| VP Livre (mesmo sigma_final, mesma referencia de price_now). Em   |
-//| path invalido retornam respectivamente VP_INVALID e 0.0.           |
+//| n_sigma execucao as-of timestamp t. SEM cache M1 (recalcula       |
+//| sempre). ret_1h = price_now / close[1h atras] - 1 ;               |
+//| n_sigma = ret_1h / sigma_final                                     |
 //+------------------------------------------------------------------+
-double _NSigmaAsOfBarra(const datetime t, const double sigma_hist,
-                        const bool is_current_bar, const int shift_m5_hint,
-                        double &out_sigma_final, double &out_price_now)
+double _NSigmaExecAsOf(const datetime t, const double sigma_hist,
+                       const bool is_current_bar, const int shift_m1_hint,
+                       double &out_sigma_final, double &out_price_now)
 {
    out_sigma_final = VP_INVALID;
    out_price_now   = 0.0;
    if(sigma_hist == VP_INVALID || sigma_hist <= 0.0) return VP_INVALID;
 
-   const int shift_m5 = (shift_m5_hint >= 0) ? shift_m5_hint
-                                              : iBarShift(_Symbol, PERIOD_M5, t, false);
-   if(shift_m5 < 0) return VP_INVALID;
+   const int shift_m1 = (shift_m1_hint >= 0) ? shift_m1_hint
+                                             : iBarShift(_Symbol, PERIOD_M1, t, false);
+   if(shift_m1 < 0) return VP_INVALID;
 
-   MqlRates rates_m5[];
-   const int copied = CopyRates(_Symbol, PERIOD_M5, shift_m5, s_m5_window, rates_m5);
-   if(copied < VP_NMIN_M5) return VP_INVALID;
+   MqlRates rates_m1[];
+   const int copied = CopyRates(_Symbol, PERIOD_M1, shift_m1, s_exec_window, rates_m1);
+   if(copied < VP_NMIN_M1) return VP_INVALID;
 
-   const int n_m5 = copied;
-   double closes_m5[];
-   ArrayResize(closes_m5, n_m5, n_m5);
-   for(int i = 0; i < n_m5; i++)
-      closes_m5[i] = rates_m5[i].close;
+   const int n_m1 = copied;
+   double closes_m1[];
+   ArrayResize(closes_m1, n_m1, n_m1);
+   for(int i = 0; i < n_m1; i++)
+      closes_m1[i] = rates_m1[i].close;
 
-   double rets_m5[];
-   _PctChange(closes_m5, rets_m5, n_m5);
+   double rets_m1[];
+   _PctChange(closes_m1, rets_m1, n_m1);
 
-   double rets_m5_w[];
-   _MaybeWinsor(rets_m5, rets_m5_w, n_m5, VP_NMIN_M5);
+   double rets_m1_w[];
+   _MaybeWinsor(rets_m1, rets_m1_w, n_m1, VP_NMIN_M1);
 
-   // Paridade Portal: sigma_real = std bruto dos retornos M5 (winsor opcional),
-   // SEM anualizacao. Replica passo 6 do _VP2_ComputeIntraday do EA.
-   const double sigma_real = _StdSample(rets_m5_w, n_m5);
+   // sigma_real = std bruto dos retornos M1 (winsor opcional; sem anualizacao -- paridade VP v2).
+   // Com ~60 amostras o winsor e quase inerte aqui -- protecao vem do lado H1.
+   const double sigma_real = _StdSample(rets_m1_w, n_m1);
    if(sigma_real == VP_INVALID || sigma_real <= 0.0) return VP_INVALID;
 
    const double sigma_final = s_alpha * sigma_hist
                             + (1.0 - s_alpha) * sigma_real;
    if(sigma_final < VP_EPS) return VP_INVALID;
 
-   // price_now: midprice live SOMENTE na vela corrente; barras historicas
-   // usam o close da vela (definitivo, ja fechou).
-   const double close_now = closes_m5[n_m5 - 1];
+   const double close_now = closes_m1[n_m1 - 1];
    const double price_now = is_current_bar ? _GetCurrentPrice(close_now) : close_now;
 
-   const double price_24h_ago = closes_m5[0];
-   if(price_now <= 0.0 || price_24h_ago <= 0.0) return VP_INVALID;
+   const double price_1h_ago = closes_m1[0];   // s_exec_window barras atras ~ 1 hora
+   if(price_now <= 0.0 || price_1h_ago <= 0.0) return VP_INVALID;
 
-   const double ret_24h = price_now / price_24h_ago - 1.0;
-   const double n_sigma = ret_24h / sigma_final;
+   const double ret_1h  = price_now / price_1h_ago - 1.0;
+   const double n_sigma = ret_1h / sigma_final;
 
    out_sigma_final = sigma_final;
    out_price_now   = price_now;
@@ -666,23 +608,7 @@ double _NSigmaAsOfBarra(const datetime t, const double sigma_hist,
 }
 
 //+------------------------------------------------------------------+
-//| OnCalculate -- loop por barra do chart                             |
-//|                                                                    |
-//| - Hook retardado para criar OBJ_HLINE (subwin so disponivel apos  |
-//|   primeira chamada).                                               |
-//| - Gate MTF: se dados insuficientes, retorna prev_calculated em    |
-//|   vez de 0 (retornar 0 dispararia ArrayInitialize e apagaria tudo).|
-//| - s_need_full_reset (setado pelo OnInit em REASON_PARAMETERS et   |
-//|   al) forca full recalc no proximo passo.                          |
-//| - g_hadGaps so marca true para gaps na ZONA QUENTE (ultimas       |
-//|   s_m5_window barras). Gaps em barras antigas naturalmente        |
-//|   invalidas (D1<420 ou M5<288) sao normais e nao re-armam o full   |
-//|   recalc reciclico.                                                |
-//| - Vela corrente: gate 300s -- entre amostras reusa s_last_*.       |
-//| - alphas EMA pre-calculados fora do loop.                          |
-//| - blocos MA pulados se MA inativa (Start=0 e Ref=0).               |
-//| - shift M5 por aritmetica de indice quando chart e M5 e            |
-//|   bars_m5 == rates_total. Fallback iBarShift caso contrario.       |
+//| OnCalculate                                                        |
 //+------------------------------------------------------------------+
 int OnCalculate(const int rates_total,
                 const int prev_calculated,
@@ -697,7 +623,7 @@ int OnCalculate(const int rates_total,
 {
    if(rates_total <= 0) return 0;
 
-   //--- Criacao retardada das OBJ_HLINE (subwin so registrada apos OnInit retornar) ---
+   //--- Criacao retardada das OBJ_HLINE ---
    static bool s_refs_created = false;
    if(!s_refs_created)
    {
@@ -711,10 +637,10 @@ int OnCalculate(const int rates_total,
    }
 
    //--- Gate MTF: dados insuficientes -> preserva o que ja foi calculado ---
-   const int bars_d1 = iBars(_Symbol, PERIOD_D1);
-   const int bars_m5 = iBars(_Symbol, PERIOD_M5);
-   if(bars_d1 < s_d1_ewma || bars_m5 < s_m5_window)
-      return prev_calculated;   // retornar 0 aqui apagaria tudo (ArrayInitialize)
+   const int bars_h1 = iBars(_Symbol, PERIOD_H1);
+   const int bars_m1 = iBars(_Symbol, PERIOD_M1);
+   if(bars_h1 < (VP_NMIN_H1 + 2) || bars_m1 < s_exec_window)
+      return prev_calculated;
 
    //--- s_need_full_reset (REASON_PARAMETERS/RECOMPILE/CHARTCHANGE) ---
    int  start;
@@ -753,23 +679,20 @@ int OnCalculate(const int rates_total,
       if(start < 0) start = 0;
    }
 
-   //--- Snapshot da config admin para o loop ---
-   const int    ms_per          = _GetMAStartPeriod();
-   const int    mr_per          = _GetMARefPeriod();
-   const bool   lines_active    = InpShow_Lines && (ms_per > 0 || mr_per > 0);
-   const int    vp_w            = s_vp_livre_window;
-   const bool   vp_livre_active = InpShow_Lines && (vp_w > 0);
+   //--- Snapshot da config ---
+   const int  ms_per          = _GetMAStartPeriod();
+   const int  mr_per          = _GetMARefPeriod();
+   const bool lines_active    = InpShow_Lines && (ms_per > 0 || mr_per > 0);
+   const int  vp_w            = s_vp_livre_window;
+   const bool vp_livre_active = InpShow_Lines && (vp_w > 0);
 
-   //--- alphas EMA pre-calculados fora do loop ---
    const double a_s = (ms_per > 0) ? 2.0 / ((double)ms_per + 1.0) : 0.0;
    const double a_r = (mr_per > 0) ? 2.0 / ((double)mr_per + 1.0) : 0.0;
 
-   //--- shift_m5 por aritmetica se chart M5 e arrays alinhados ---
-   const bool can_use_arith_shift = g_chart_is_m5 && (bars_m5 == rates_total);
+   const bool can_use_arith_shift = g_chart_is_m1 && (bars_m1 == rates_total);
 
-   //--- zona quente para deteccao de gap (gaps fora dela sao normais) ---
-   const int hot_start = (rates_total > s_m5_window)
-                          ? rates_total - s_m5_window : 0;
+   const int hot_start = (rates_total > s_exec_window)
+                          ? rates_total - s_exec_window : 0;
 
    bool hadGapsThisPass = false;
 
@@ -778,7 +701,7 @@ int OnCalculate(const int rates_total,
       const bool     is_current_bar = (i == rates_total - 1);
       const datetime t              = time[i];
 
-      //--- Gate 300s na vela corrente: entre amostras, reusa s_last_* ---
+      //--- Gate de cadencia na vela corrente: entre amostras, reusa s_last_* ---
       if(is_current_bar && s_last_sample_ts != 0
          && (TimeCurrent() - s_last_sample_ts) < (datetime)kSampleIntervalSec)
       {
@@ -792,38 +715,34 @@ int OnCalculate(const int rates_total,
          continue;
       }
 
-      //--- hint de shift M5 (ou -1 para fallback iBarShift) ---
-      const int shift_m5 = can_use_arith_shift ? (rates_total - 1 - i) : -1;
+      const int shift_m1 = can_use_arith_shift ? (rates_total - 1 - i) : -1;
 
-      //--- Calculo sigma_hist + n_sigma para a barra ---
       const double sigma_hist = _SigmaHistAsOf(t);
       if(sigma_hist == VP_INVALID)
       {
          BufVP[i] = EMPTY_VALUE;
          if(lines_active)    { BufMA_Start[i] = EMPTY_VALUE; BufMA_Ref[i] = EMPTY_VALUE; }
          if(vp_livre_active) BufVP_Livre[i] = EMPTY_VALUE;
-         if(i >= hot_start) hadGapsThisPass = true;   // gap na zona quente
+         if(i >= hot_start) hadGapsThisPass = true;
          continue;
       }
 
-      //--- out params do _NSigmaAsOfBarra para reuso pelo VP Livre ---
       double sigma_final = VP_INVALID;
       double price_now   = 0.0;
-      const double n_sigma = _NSigmaAsOfBarra(t, sigma_hist, is_current_bar, shift_m5,
-                                              sigma_final, price_now);
+      const double n_sigma = _NSigmaExecAsOf(t, sigma_hist, is_current_bar, shift_m1,
+                                             sigma_final, price_now);
       if(n_sigma == VP_INVALID)
       {
          BufVP[i] = EMPTY_VALUE;
          if(lines_active)    { BufMA_Start[i] = EMPTY_VALUE; BufMA_Ref[i] = EMPTY_VALUE; }
          if(vp_livre_active) BufVP_Livre[i] = EMPTY_VALUE;
-         if(i >= hot_start) hadGapsThisPass = true;   // gap na zona quente
+         if(i >= hot_start) hadGapsThisPass = true;
          continue;
       }
 
       BufVP[i] = n_sigma;
 
-      //--- VP Livre -- valor cru (janela em horas, chart M5: 12 candles = 1h)
-      //--- Se s_vp_livre_alpha > 0, aplica EMA sobre o cru in-place.
+      //--- VP Livre -- janela em horas (M1: 60 candles = 1h) ---
       if(vp_livre_active)
       {
          double vp_raw = EMPTY_VALUE;
@@ -841,13 +760,12 @@ int OnCalculate(const int rates_total,
             BufVP_Livre[i] = s_vp_livre_alpha * vp_raw
                             + (1.0 - s_vp_livre_alpha) * BufVP_Livre[i - 1];
          else
-            BufVP_Livre[i] = vp_raw;   // sem suavizacao OU seed
+            BufVP_Livre[i] = vp_raw;
       }
 
-      //--- MAs -- bloco inteiro pulado se MA inativa ---
+      //--- MAs (EMAs paralelas sobre n_sigma execucao) ---
       if(lines_active)
       {
-         //--- MA Start ---
          if(ms_per > 0)
          {
             if(i == 0 || BufMA_Start[i-1] == EMPTY_VALUE)
@@ -858,7 +776,6 @@ int OnCalculate(const int rates_total,
          else
             BufMA_Start[i] = EMPTY_VALUE;
 
-         //--- MA Ref (paralela: input sempre n_sigma) ---
          if(mr_per > 0)
          {
             if(i == 0 || BufMA_Ref[i-1] == EMPTY_VALUE)
@@ -870,7 +787,6 @@ int OnCalculate(const int rates_total,
             BufMA_Ref[i] = EMPTY_VALUE;
       }
 
-      //--- Statics da vela corrente (suporte ao gate 300s) ---
       if(is_current_bar)
       {
          s_last_vp        = BufVP[i];

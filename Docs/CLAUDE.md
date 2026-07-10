@@ -1,21 +1,29 @@
-# CLAUDE.md -- Repositorio documental do Indicador ZiahTrader MA VP
+# CLAUDE.md -- Repositorio documental dos Indicadores ZiahTrader MA VP
 
 > Este arquivo fornece contexto para o Claude Code (CC) trabalhar com a
-> documentacao do indicador `ZiahTrader_MA_VP.mq5`. Leia antes de qualquer
+> documentacao da FAMILIA de indicadores MA VP. Leia antes de qualquer
 > acao neste repositorio.
 
 ---
 
 ## 1. Identidade
 
-- **Produto:** Indicador ZiahTrader MA VP -- ferramenta de transparencia
-  visual para o operador acompanhar o regime de volatilidade do preco no
-  chart MetaTrader 5.
-- **Arquivo do codigo:** `MQL5/Indicators/ZiahTrader_MA_VP.mq5`.
+- **Produto:** familia de 3 indicadores ZiahTrader MA VP -- ferramentas de
+  transparencia visual para o operador acompanhar o regime de volatilidade
+  do preco no chart MetaTrader 5, em 3 horizontes (tiers).
+- **Arquivos de codigo (raiz de `MQL5/Indicators/`, repo git proprio
+  `roboxau-indicadores`):**
+  - `ZiahTrader_MA_VP_M5.mq5` -- DAYTRADE (v2.6; ate 2026-07-09 chamava-se
+    `ZiahTrader_MA_VP.mq5`)
+  - `ZiahTrader_MA_VP_M30.mq5` -- SWING (v1.2)
+  - `ZiahTrader_MA_VP_M1.mq5` -- EXECUCAO (v1.0)
 - **Pasta de docs (esta pasta):** `MQL5/Indicators/Docs/`.
-- **Versao atual:** v2.3 (calibragem unica universal, MA Start + MA Ref
-  + VP Livre, 4 plots, 5 inputs em grupo unico, 17 niveis de referencia
-  subwin-aware, otimizacoes B1-B6 preservadas).
+- **Spec canonica:** `specs/SPEC_MA_VP_3_TIERS.md` (era flip/perfil/winsor,
+  janelas por ativo medidas pelo terminal, defaults canonicos, hierarquia
+  de decisao 3 TFs). `specs/SPEC_INDICADOR_MA_VP.md` = superseded parcial
+  (era v2.3, so M5 pre-flip; detalhes de buffers/validacao/B1-B6).
+- Todos: 4 plots, 8 inputs em grupo unico, 17 OBJ_HLINE subwin-aware,
+  calibragem unica universal, otimizacoes B1-B6 preservadas.
 
 ---
 
@@ -144,10 +152,11 @@ exclusivamente do Emerson.
 
 ```
 Indicators/Docs/
-|-- README.md              -- introducao ao indicador para usuarios e clientes
+|-- README.md              -- introducao a familia p/ usuarios e clientes
 |-- CLAUDE.md              -- este arquivo (instrucoes para o CC)
 |-- specs/
-|   +-- SPEC_INDICADOR_MA_VP.md
+|   |-- SPEC_MA_VP_3_TIERS.md      -- CANONICO (3 tiers, era flip)
+|   +-- SPEC_INDICADOR_MA_VP.md    -- superseded parcial (v2.3, so M5)
 |-- relatorios/
 |   +-- RELATORIO_ORIGEM_VP_v2.md
 |-- investigacoes/
@@ -155,7 +164,7 @@ Indicators/Docs/
 |-- sprints/
 |   +-- SPRINT_CRIACAO_INDICADOR.md
 +-- legado/
-    -- (vazio inicialmente; reservado para versoes futuras obsoletas)
+    +-- CHANGELOG_LEGADO.md
 ```
 
 Cada nova investigacao, sprint, ou versao obsoleta deve ir para a subpasta
@@ -166,7 +175,7 @@ subpastas).
 
 ## 8. Fonte da verdade
 
-O **codigo do indicador** (`MQL5/Indicators/ZiahTrader_MA_VP.mq5`) e a
+O **codigo dos indicadores** (`MQL5/Indicators/ZiahTrader_MA_VP_M*.mq5`) e a
 fonte da verdade. Documentos deste repositorio descrevem o que o codigo
 faz. Em caso de divergencia entre documento e codigo, o codigo vence -- o
 documento deve ser atualizado.

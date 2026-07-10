@@ -1,216 +1,130 @@
-# Indicador ZiahTrader MA VP
+# Indicadores ZiahTrader MA VP -- familia de 3 tiers
 
-> **Tipo:** Indicador standalone para MetaTrader 5.
-> **Arquivo:** `MQL5/Indicators/ZiahTrader_MA_VP.mq5` (`.ex5` apos compilacao).
-> **Versao atual:** v2.3 (calibragem unica universal -- MA Start + MA Ref paralelas + VP Livre opcional, 4 plots, 17 niveis de referencia, otimizacoes B1-B6 preservadas).
+> **Tipo:** indicadores standalone para MetaTrader 5.
+> **Arquivos:** `MQL5/Indicators/ZiahTrader_MA_VP_M5.mq5` (daytrade, v2.6) +
+> `ZiahTrader_MA_VP_M30.mq5` (swing, v1.2) + `ZiahTrader_MA_VP_M1.mq5` (execucao, v1.0).
+> (`.ex5` apos compilacao pelo Emerson.)
+> **Spec canonica:** `specs/SPEC_MA_VP_3_TIERS.md` (formula, janelas por ativo, defaults, hierarquia).
 > **Distribuicao:** opcional, junto com o EA ZiahTrader.
 
 ---
 
 ## 1. Proposito
 
-O Indicador ZiahTrader MA VP e uma ferramenta de **transparencia visual** para
-o operador acompanhar no chart MT5 o regime de volatilidade do preco do par
-operado. Exibe duas medias moveis exponenciais (EMAs) -- **MA Start** e **MA
-Ref** -- calculadas sobre o sinal **VP** (`n_sigma`, retorno de 24 horas
-normalizado pela volatilidade composta), mais uma linha opcional de **VP
-Livre** com janela em horas configuravel pelo operador. A calibragem e
-universal: a partir da v2.3 o indicador opera sem distincao entre direcao
-de compra e direcao de venda -- ha um unico conjunto de parametros e o
-operador interpreta visualmente as linhas conforme o regime observado.
+Ferramentas de **transparencia visual** para o operador acompanhar no chart MT5
+o regime de volatilidade do preco em tres horizontes. Cada indicador plota o
+sinal **VP** (`n_sigma` -- retorno da janela normalizado pela volatilidade
+composta) + duas EMAs sobre ele (**MA Start** e **MA Ref**) + **VP Livre**
+opcional. Calibragem unica universal (sem direcao COMPRA/VENDA desde a v2.3).
+
+| Tier | Arquivo | Chart | Horizonte | Papel |
+|---|---|---|---|---|
+| DAYTRADE | `ZiahTrader_MA_VP_M5` | M5 | ret 24h / vol diaria (D1) | regime do dia |
+| SWING | `ZiahTrader_MA_VP_M30` | M30 | ret 7d / vol semanal (W1) | tendencia principal |
+| EXECUCAO | `ZiahTrader_MA_VP_M1` | M1 | ret 1h / vol horaria (H1) | micro-timing |
+
+Hierarquia operacional (visao 2026-07-09): **M30 + M5 ditam o corredor**
+(convergencia = tendencia validada); **M1 e o decisor** dentro do corredor,
+buscando micro pullbacks operacionais. Detalhe na sec 6 da spec.
 
 ---
 
 ## 2. Principio P3 -- independencia total do EA
 
-O indicador e **standalone**:
-
-- Zero `#include` de cabecalhos do EA.
-- Zero dependencia de variaveis globais do EA.
-- Pode ser compilado e instalado em qualquer terminal MT5, mesmo sem o EA
-  presente.
-- O **EA NAO depende do indicador** -- o EA implementa seu proprio calculo
-  interno equivalente. Remover o indicador do chart nao afeta o EA.
-
-A relacao entre EA e indicador e de **espelhamento matematico**: ambos
-implementam o mesmo pipeline VP v2 portado do velocimetro do Portal Ziah
-Trader, mas em ambientes independentes.
+Os indicadores sao **standalone**: zero `#include` do EA, zero variaveis
+globais compartilhadas, compilam em qualquer terminal MT5 sem o EA. O EA
+implementa internamente o mesmo pipeline (modulos proprios); a relacao e de
+**espelhamento matematico**, nao de dependencia. Remover indicador do chart
+nao afeta o EA.
 
 ---
 
-## 3. O que aparece no chart
-
-O indicador abre uma **sub-janela separada** (separate window) abaixo do
-chart principal, com:
+## 3. O que aparece no chart (identico nos 3, em sub-janela separada)
 
 | Plot | Linha | Cor | Estilo | Significado |
 |---|---|---|---|---|
-| 0 | VP | cinza (clrSilver) | pontilhada fina | n_sigma instantaneo (volatilidade composta normalizada) |
-| 1 | MA Start | azul forte (clrDodgerBlue) | continua | EMA Start (paralela sobre n_sigma) |
-| 2 | MA Ref | azul claro (clrAqua) | continua | EMA Ref (paralela sobre n_sigma) |
+| 0 | VP | cinza (clrSilver) | pontilhada fina | n_sigma instantaneo do tier |
+| 1 | MA Start | azul forte (clrDodgerBlue) | continua | EMA curta sobre n_sigma |
+| 2 | MA Ref | azul claro (clrAqua) | continua | EMA longa sobre n_sigma |
 | 3 | VP Livre | laranja (clrOrange) | tracejada | VP com janela em horas configuravel (opcional) |
 
-Alem dos 4 plots, sao desenhadas **17 linhas horizontais de referencia**
-(niveis -8 a +8 sigma) como objetos `OBJ_HLINE`, sempre ativas, em cinza
-pontilhado fino. Servem de escala visual para leitura do regime. Cada
-instancia do indicador no chart usa um conjunto unico de HLINEs por
-sub-janela (nomes subwin-aware), permitindo duas instancias coexistindo
-sem colisao visual.
-
-O operador liga/desliga as 3 linhas configuraveis em conjunto via toggle
-unico `InpShow_Lines`. Plot 0 (VP) e sempre visivel quando o indicador
-esta carregado.
-
-Para ler o valor sigma de uma HLINE especifica, usar o crosshair do MT5
-(passar o mouse sobre a linha). Labels visuais dentro do plot foram
-descartados na v2.1 para nao poluir a area de plotagem.
+Mais **17 OBJ_HLINE de referencia** (-8 a +8 sigma), subwin-aware (2+
+instancias coexistem no mesmo chart -- prefixos ZTMAVP_REF_W /
+ZTMAVPSW_REF_W / ZTMAVPM1_REF_W). Valor sigma de cada linha via crosshair.
 
 ---
 
-## 4. Formula resumida
+## 4. Inputs (8, identicos nos 3) e defaults canonicos
 
-O indicador calcula, a cada nova amostra valida do VP:
+| Input | Default | Descricao |
+|---|---|---|
+| `InpAtivo` | OURO | flip de janelas por ativo (OURO com gaps / BITCOIN 24-7) |
+| `InpPerfil` | AGRESSIVO | lambda/alpha do sigma (CON/MOD/AGR/ULT -- ver spec sec 4) |
+| `InpWinsor` | true | apara outliers de gap/spike nos retornos do sigma |
+| `InpMA_Start_Period` | M5/M30: **6** ; M1: **4** | EMA curta (0=off) |
+| `InpMA_Ref_Period` | M5/M30: **18** ; M1: **10** | EMA longa (0=off) |
+| `InpVP_Livre_Hours` | 0 (off) | janela do VP Livre em horas (max 720) |
+| `InpVP_Livre_Smooth` | 0 (off) | suavizacao EMA do VP Livre |
+| `InpShow_Lines` | true | toggle unico das linhas configuraveis |
 
-```
-n_sigma  =  ret_24h / sigma_final
-EMA[t]   =  alpha * n_sigma[t] + (1 - alpha) * EMA[t-1]    com alpha = 2 / (N + 1)
-```
-
-Onde:
-
-- `ret_24h` -- retorno do preco nos ultimos 23-24 horas (janela de 288 barras M5)
-- `sigma_final` -- volatilidade composta hibrida: combinacao do componente
-  historico (`sigma_hist`, EWMA D1 sobre retornos winsorizados, com lambda=0.92)
-  e do componente recente (`sigma_real`, std amostral M5 sobre retornos
-  winsorizados)
-- `N` -- periodo da EMA (input do usuario, valor inteiro >= 2)
-
-Detalhes do pipeline VP v2 em `specs/SPEC_INDICADOR_MA_VP.md`. Origem do
-pipeline e historico de portabilidade em `relatorios/RELATORIO_ORIGEM_VP_v2.md`.
+Defaults fixados por imagem de referencia (`Indicators/Tela_Parametros_Indicador.png`,
+Emerson 2026-07-09). Janelas internas por ativo: ver tabela da spec sec 3
+(contagens MEDIDAS pelo terminal via `ZT_DiagContagemCandles`).
 
 ---
 
-## 5. Inputs (5 totais, 1 grupo unico)
+## 5. Como instalar no MT5
 
-### 5.1 Grupo `=== Calibragem MAs VP ===`
+1. Copiar os `.ex5` desejados para `MQL5/Indicators/` do terminal.
+2. Atualizar o Navegador (botao direito -> Atualizar) ou reiniciar o MT5.
+3. Arrastar cada indicador para o chart do TIMEFRAME correspondente ao seu
+   tier (M5 / M30 / M1) -- rodar fora do TF de desenho gera aviso no log e
+   cadencia visual incorreta.
+4. Ajustar `InpAtivo` conforme o par (OURO p/ XAUUSD; BITCOIN p/ BTCUSD).
 
-| Input | Tipo | Default | Descricao |
-|---|---|---|---|
-| `InpMA_Start_Period` | int | 14 | Periodo da MA Start (0 desativa) |
-| `InpMA_Ref_Period` | int | 0 | Periodo da MA Referencia (0 desativa) |
-| `InpVP_Livre_Hours` | int | 23 | VP Livre: janela em horas (0=off, max=720) |
-| `InpVP_Livre_Smooth` | int | 15 | VP Livre: suavizacao EMA (0=off, >0=periodo EMA in-place) |
-| `InpShow_Lines` | bool | true | Exibir linhas (toggle unico para MA Start, MA Ref e VP Livre) |
-
-### 5.2 Modo das MAs
-
-Ambas as MAs (Start e Ref) operam em **modo paralela**: a EMA Ref e
-calculada diretamente sobre `n_sigma`, em paralelo com a EMA Start. As
-duas "competem" sobre o mesmo sinal.
-
-A v2.0 mantinha slots reservados para um modo alternativo (cadeia /
-suavizada, em que a Ref consumia a saida ja suavizada da Start). Esses
-slots foram removidos definitivamente em v2.1 e a separacao direcional
-COMPRA/VENDA foi colapsada em v2.3 para uma calibragem unica. Detalhes
-em `legado/CHANGELOG_LEGADO.md`.
+**Requisitos de historico:** DAYTRADE: D1 >= ~314 + M5 >= 276. SWING: W1 >=
+~22 + M30 >= 230. EXECUCAO: H1 >= ~32 + M1 >= 60. Historico insuficiente =
+warmup (plot vazio ate os minimos chegarem).
 
 ---
 
-## 6. Como instalar no MT5
+## 6. Relacao com o Portal e com o EA
 
-1. Copiar `ZiahTrader_MA_VP.ex5` para a pasta `MQL5/Indicators/` do seu
-   terminal MetaTrader 5.
-2. Reiniciar o MetaTrader 5 ou clicar com o botao direito em
-   **"Navegador" -> Indicadores** e selecionar **"Atualizar"**.
-3. Arrastar `ZiahTrader_MA_VP` do navegador para o chart do par desejado
-   (XAUUSD ou outro).
-4. Na janela de inputs, ajustar:
-   - `InpShow_Lines` (toggle unico para MA Start, MA Ref e VP Livre).
-   - Periodos das EMAs e janela do VP Livre (defaults sao calibrados
-     para XAUUSD em chart M5; outros pares ou timeframes podem exigir
-     ajuste empirico).
-5. Confirmar. O indicador abre uma sub-janela abaixo do chart com ate
-   4 linhas (VP + MA Start + MA Ref + VP Livre) + 17 niveis de
-   referencia.
-
-**Requisitos:** MetaTrader 5 com simbolo selecionado e acesso a historico
-**D1** (minimo 420 barras) e **M5** (minimo 288 barras). Em par com historico
-insuficiente, o indicador entra em estado de warmup ate dados suficientes
-estarem disponiveis.
+- **Portal `/resultados`:** mesmo `n_sigma` do backend Python do velocimetro
+  ("mesmo indicador, dois ambientes"); Portal = referencia auditavel,
+  indicador = leitura em tempo real. Ver `relatorios/RELATORIO_ORIGEM_VP_v2.md`.
+- **EA:** implementa o mesmo pipeline internamente (VP daytrade + VP swing).
+  Cadencias e amostragem diferem -- **equivalencia visual estrita NAO e
+  esperada** (ver `investigacoes/DIVERGENCIA_CADENCIA_EA.md`).
 
 ---
 
-## 7. Relacao com o Portal `/resultados`
+## 7. Limitacoes conhecidas
 
-A pagina `/resultados` do portal Ziah Trader (`ziahtrader.com`) publica o
-mesmo `n_sigma` calculado pelo backend Python do velocimetro. O indicador
-implementa o mesmo pipeline em MQL5 nativo, com tolerancia de paridade
-conceitual dentro de pequena margem numerica.
-
-**Filosofia operacional:** "mesmo indicador, dois ambientes". O Portal e a
-referencia auditavel; o indicador no chart e a leitura em tempo real para o
-operador. Detalhes em `relatorios/RELATORIO_ORIGEM_VP_v2.md`.
-
----
-
-## 8. Relacao com o EA ZiahTrader
-
-O EA implementa internamente o mesmo pipeline VP v2 (mesma matematica, mesmas
-constantes nucleares -- lambda=0.92, alpha=0.55, winsor 0.005/0.995). A
-diferenca entre EA e indicador esta na **cadencia de amostragem** e nos
-**defaults de periodo das EMAs**, conforme detalhado em
-`investigacoes/DIVERGENCIA_CADENCIA_EA.md`.
-
-**Equivalencia visual estrita NAO e esperada.** O indicador serve como
-ferramenta visual de regime; o EA decide acoes de trading com base no seu
-calculo interno. Use o indicador para entender o que o operador esta
-acompanhando, nao para prever decisoes do EA.
+- **Nao funcionam no Strategy Tester** (dependem de `SymbolInfoTick()` live
+  para o midprice da vela corrente).
+- **Cadencia visual depende do TF do chart** -- rodar cada tier no seu TF.
+- **Bootstrap em par novo:** warmup ate os minimos de historico.
+- **Tier M1:** sigma_real com ~60 amostras e mais ruidoso que nos irmaos e o
+  winsor e quase inerte no lado M1 (aceito por desenho -- spec sec 5).
+  Historico M1 do broker limita o alcance do plot (XAU ~3.5 meses; BTC
+  poucos dias em 2026-07).
+- **Performance:** otimizacoes da v2.1 preservadas (zona quente, shift
+  aritmetico, alphas pre-calculados); em chart M1 observar CPU na 1a carga.
 
 ---
 
-## 9. Limitacoes conhecidas
-
-- **Nao funciona no Strategy Tester.** O indicador depende de tick em tempo
-  real para o calculo de midprice na vela corrente; o Tester nao alimenta
-  `SymbolInfoTick()` da mesma forma. Em chart live (DEMO ou REAL) o
-  indicador opera normalmente.
-- **Cadencia visual depende do timeframe do chart.** Em M5, cada barra do
-  chart amostra `n_sigma`; em H1, apenas 1 amostra por hora. EMAs do mesmo
-  periodo em chart M5 e em chart H1 representam janelas de tempo
-  diferentes.
-- **Bootstrap em par novo.** Em par recem-disponibilizado no broker (pouco
-  historico D1/M5), o indicador permanece em warmup ate os minimos serem
-  atingidos.
-- **Sem labels visuais nas HLINEs de referencia.** O operador le valor
-  sigma de cada linha via crosshair (passa o mouse na linha). Decisao da
-  v2.1 para nao poluir a area de plotagem -- ver
-  `legado/CHANGELOG_LEGADO.md`.
-
-### 9.1 Nota de performance (v2.1)
-
-A v2.0 sofria de um problema de auto-rearm do full recalc a cada 5
-segundos, causado por gaps naturalmente esperados em barras antigas
-(historico D1 < 420 ou M5 < 288 no inicio da serie). A v2.1 restringe
-a deteccao de gap a zona quente (ultimas `kM5_Window_Bars` barras),
-elimina o loop reciclico, e adiciona 4 otimizacoes complementares
-(shift M5 aritmetico, alphas pre-calculados, blocos por direcao
-inativa, reserve em ArrayResize). Resultado: CPU do `terminal64.exe`
-substancialmente reduzida apos a carga inicial; sem mais atrasos
-perceptiveis em atualizacao de candle ou no funcionamento do EA
-coabitando no mesmo terminal.
-
----
-
-## 10. Documentacao detalhada
+## 8. Documentacao detalhada
 
 | Documento | Conteudo |
 |---|---|
-| `specs/SPEC_INDICADOR_MA_VP.md` | Formula completa, pipeline VP v2 passo a passo, buffers, validacao R4-R6, constantes internas, otimizacoes B1-B6 |
-| `relatorios/RELATORIO_ORIGEM_VP_v2.md` | Historico de portabilidade do velocimetro do Portal para MQL5 (decisoes canonicas D1=260, M5=276, sem anualizacao) |
-| `investigacoes/DIVERGENCIA_CADENCIA_EA.md` | Tabela comparativa de cadencias entre indicador (M5/H1) e EA, janelas efetivas das EMAs, nota sobre equivalencia nao-estrita |
-| `sprints/SPRINT_CRIACAO_INDICADOR.md` | Cronologia de desenvolvimento do indicador: commit inicial f02ba42, evolucao para v2.0 admin-driven, v2.1 paralelas-only, v2.2 VP Livre, v2.3 unificacao |
-| `legado/CHANGELOG_LEGADO.md` | Registro de remocoes e descontinuacoes (v2.1: MAs Suavizadas; v2.3: separacao direcional COMPRA/VENDA) |
-| `CLAUDE.md` | Instrucoes para o Claude Code operar neste repositorio documental |
+| `specs/SPEC_MA_VP_3_TIERS.md` | **CANONICO** -- formula, janelas medidas, perfis, defaults, hierarquia 3 TFs |
+| `specs/SPEC_INDICADOR_MA_VP.md` | [superseded parcial] era v2.3, so M5 pre-flip -- detalhes de buffers/validacao/B1-B6 |
+| `relatorios/RELATORIO_ORIGEM_VP_v2.md` | portabilidade do velocimetro Portal -> MQL5 |
+| `investigacoes/DIVERGENCIA_CADENCIA_EA.md` | cadencias indicador vs EA |
+| `sprints/SPRINT_CRIACAO_INDICADOR.md` | cronologia do desenvolvimento (f02ba42 -> v2.3) |
+| `legado/CHANGELOG_LEGADO.md` | remocoes e descontinuacoes historicas |
+| `CLAUDE.md` | instrucoes para o Claude Code operar neste repositorio |
 
 ---
 

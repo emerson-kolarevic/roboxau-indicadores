@@ -1,6 +1,6 @@
-   //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                                       ZiahTrader_MA_VP_M30.mq5    |
-//|             Indicador MA VP SWING (M30) -- v1.0 (em construcao)   |
+//|                Indicador MA VP SWING (M30) -- v1.2                |
 //|                                                                  |
 //| Versao SWING do ZiahTrader_MA_VP (que roda no M5/24h). Espelha a  |
 //| MESMA metodologia do pipeline VP v2 (lambda 0.92, alpha 0.55,     |
@@ -31,10 +31,10 @@
 //+------------------------------------------------------------------+
 #property copyright   "Ziah Trader"
 #property link        "https://ziahtrader.com"
-#property version     "1.10"
+#property version     "1.20"
 #property description "MA VP SWING (M30): VP (n_sigma 7d / vol semanal) + MA Start + MA Ref + VP Livre"
 #property description "Espelha o pipeline VP v2, escalado p/ swing (W1 + M30 + ret_7d)"
-#property description "v1.1: flip de ativo OURO/BITCOIN (M30 7d) + perfil de risco + winsor toggle. Rodar no M30"
+#property description "v1.2: defaults canonicos MA 6/18 (Emerson 2026-07-09). Rodar no M30"
 
 #property indicator_separate_window
 #property indicator_buffers 4
@@ -93,14 +93,14 @@ enum ZT_Perfil
 };
 
 //+------------------------------------------------------------------+
-//| Inputs do usuario (7 totais, 1 grupo unico)                       |
+//| Inputs do usuario (8 totais, 1 grupo unico)                       |
 //+------------------------------------------------------------------+
 input group "=== Calibragem MA VP Swing (M30) ==="
 input ZT_Ativo  InpAtivo      = ATIVO_OURO;       // Ativo: OURO (gaps) / BITCOIN (24h7d)
 input ZT_Perfil InpPerfil     = PERFIL_AGRESSIVO; // Perfil de risco (lambda/alpha)
 input bool InpWinsor          = true;   // Winsor (apara outliers de gap/spike no sigma)
-input int  InpMA_Start_Period = 14;     // MA Start: periodo EMA sobre n_sigma swing (0=off)
-input int  InpMA_Ref_Period   = 0;      // MA Ref: periodo EMA sobre n_sigma swing (0=off)
+input int  InpMA_Start_Period = 6;      // MA Start: periodo EMA sobre n_sigma swing (0=off)
+input int  InpMA_Ref_Period   = 18;     // MA Ref: periodo EMA sobre n_sigma swing (0=off)
 input int  InpVP_Livre_Hours  = 0;      // VP Livre: janela em horas (0=off) -- M30: 2 candles/h
 input int  InpVP_Livre_Smooth = 0;      // VP Livre: suavizacao EMA (0=off)
 input bool InpShow_Lines      = true;   // Exibir linhas
@@ -471,7 +471,7 @@ int OnInit()
                    ativo_str, perfil_str, (s_winsor ? "+w" : ""),
                    _GetMAStartPeriod(), _GetMARefPeriod(), s_swing_window, s_w_ewma_bars));
 
-   PrintFormat("[ZTMAVP_SW] v1.1 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s | M30_7d=%d W1_2a=%d | MA %d/%d | VP_Livre=%dh s%d",
+   PrintFormat("[ZTMAVP_SW] v1.2 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s | M30_7d=%d W1_2a=%d | MA %d/%d | VP_Livre=%dh s%d",
                ativo_str, perfil_str, s_lambda, s_alpha, (s_winsor ? "ON" : "OFF"),
                s_swing_window, s_w_ewma_bars,
                _GetMAStartPeriod(), _GetMARefPeriod(), vp_h, smooth);
