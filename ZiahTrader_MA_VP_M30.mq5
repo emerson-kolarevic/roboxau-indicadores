@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                       ZiahTrader_MA_VP_M30.mq5    |
-//|                Indicador MA VP SWING (M30) -- v1.2                |
+//|                Indicador MA VP SWING (M30) -- v1.3                |
 //|                                                                  |
 //| Versao SWING do ZiahTrader_MA_VP (que roda no M5/24h). Espelha a  |
 //| MESMA metodologia do pipeline VP v2 (lambda 0.92, alpha 0.55,     |
@@ -23,18 +23,26 @@
 //| W1 sigma_hist (2 anos) = 105 barras nos DOIS (semanal calendar-   |
 //| based, sem ajuste por gap).                                       |
 //|                                                                  |
-//| PRICE NOW na vela corrente: midprice live via SymbolInfoTick.    |
-//| Barras historicas usam o close M30. Gate de cadencia 1800s (M30). |
+//| v1.3 (F1 parciais em cadeia, 2026-07-13): vela corrente ancora   |
+//| no CLOSE do ultimo M5 FECHADO (parcial deterministica: 6 parciais |
+//| por barra M30, amostra a cada barra M5 nova). Parcial = previa    |
+//| recalculada sobre o estado ancorado (EMAs da barra corrente ja    |
+//| recalculam sobre BufMA[i-1] fixo). InpParciais_Enable=false       |
+//| restaura o comportamento v1.2 (midprice live + gate 1800s).       |
+//|                                                                  |
+//| PRICE NOW na vela corrente (parciais OFF): midprice live via     |
+//| SymbolInfoTick. Barras historicas usam o close M30. Gate de       |
+//| cadencia 1800s (M30).                                             |
 //|                                                                  |
 //| Standalone -- nao depende de nenhum modulo do EA. Para rodar no   |
 //| GRAFICO M30. Calibragem unica (sem COMPRA/VENDA).                 |
 //+------------------------------------------------------------------+
 #property copyright   "Ziah Trader"
 #property link        "https://ziahtrader.com"
-#property version     "1.20"
+#property version     "1.30"
 #property description "MA VP SWING (M30): VP (n_sigma 7d / vol semanal) + MA Start + MA Ref + VP Livre"
 #property description "Espelha o pipeline VP v2, escalado p/ swing (W1 + M30 + ret_7d)"
-#property description "v1.2: defaults canonicos MA 6/18 (Emerson 2026-07-09). Rodar no M30"
+#property description "v1.3: PARCIAIS -- vela corrente viva via close do ultimo M5 fechado (6 parciais/barra). Rodar no M30"
 
 #property indicator_separate_window
 #property indicator_buffers 4
@@ -104,6 +112,7 @@ input int  InpMA_Ref_Period   = 18;     // MA Ref: periodo EMA sobre n_sigma swi
 input int  InpVP_Livre_Hours  = 0;      // VP Livre: janela em horas (0=off) -- M30: 2 candles/h
 input int  InpVP_Livre_Smooth = 0;      // VP Livre: suavizacao EMA (0=off)
 input bool InpShow_Lines      = true;   // Exibir linhas
+input bool InpParciais_Enable = true;   // Parciais: vela corrente via close do ultimo M5 fechado
 
 //+------------------------------------------------------------------+
 //| Constantes internas (espelham pipeline VP v2 -- iguais ao M5)     |
@@ -156,6 +165,7 @@ double   g_cache_sigma_hist  = VP_INVALID;
 //| Gate na vela corrente + statics dos ultimos valores                |
 //+------------------------------------------------------------------+
 datetime s_last_sample_ts  = 0;
+datetime s_last_lowtf_bar  = 0;   // barra M5 da ultima amostra (parciais ON)
 double   s_last_vp         = EMPTY_VALUE;
 double   s_last_ma_start   = EMPTY_VALUE;
 double   s_last_ma_ref     = EMPTY_VALUE;
@@ -307,6 +317,7 @@ void _ResetCaches()
 void _ResetLastSampleStatics()
 {
    s_last_sample_ts = 0;
+   s_last_lowtf_bar = 0;
    s_last_vp        = EMPTY_VALUE;
    s_last_ma_start  = EMPTY_VALUE;
    s_last_ma_ref    = EMPTY_VALUE;
@@ -354,6 +365,22 @@ double _GetCurrentPrice(const double fallback)
    if(tk.bid > 0.0)                 return tk.bid;
    if(tk.ask > 0.0)                 return tk.ask;
    return fallback;
+}
+
+//+------------------------------------------------------------------+
+//| _PriceNowVelaCorrente -- fonte do preco da vela corrente (v1.3).  |
+//| Parciais ON: close do ultimo M5 FECHADO (deterministico; no       |
+//| minuto 0 equivale ao close do M30 anterior). Parciais OFF:        |
+//| midprice live (comportamento v1.2).                               |
+//+------------------------------------------------------------------+
+double _PriceNowVelaCorrente(const double fallback)
+{
+   if(InpParciais_Enable)
+   {
+      const double c = iClose(_Symbol, PERIOD_M5, 1);
+      return (c > 0.0) ? c : fallback;
+   }
+   return _GetCurrentPrice(fallback);
 }
 
 //+------------------------------------------------------------------+
@@ -467,12 +494,14 @@ int OnInit()
 
    IndicatorSetInteger(INDICATOR_DIGITS, 4);
    IndicatorSetString(INDICATOR_SHORTNAME,
-      StringFormat("ZT_MA_VP_SW M30 [%s %s%s %d/%d m30=%d W%d]",
+      StringFormat("ZT_MA_VP_SW M30 v1.3 [%s %s%s%s %d/%d m30=%d W%d]",
                    ativo_str, perfil_str, (s_winsor ? "+w" : ""),
+                   (InpParciais_Enable ? "+p" : ""),
                    _GetMAStartPeriod(), _GetMARefPeriod(), s_swing_window, s_w_ewma_bars));
 
-   PrintFormat("[ZTMAVP_SW] v1.2 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s | M30_7d=%d W1_2a=%d | MA %d/%d | VP_Livre=%dh s%d",
+   PrintFormat("[ZTMAVP_SW] v1.3 | ativo=%s perfil=%s(L%.2f/A%.2f) winsor=%s parciais=%s | M30_7d=%d W1_2a=%d | MA %d/%d | VP_Livre=%dh s%d",
                ativo_str, perfil_str, s_lambda, s_alpha, (s_winsor ? "ON" : "OFF"),
+               (InpParciais_Enable ? "ON(M5)" : "OFF"),
                s_swing_window, s_w_ewma_bars,
                _GetMAStartPeriod(), _GetMARefPeriod(), vp_h, smooth);
 
@@ -573,8 +602,10 @@ double _NSigmaSwingAsOf(const datetime t, const double sigma_hist,
                             + (1.0 - s_alpha) * sigma_real;
    if(sigma_final < VP_EPS) return VP_INVALID;
 
+   // price_now SOMENTE na vela corrente (parciais ON = close do ultimo M5
+   // fechado; OFF = midprice live). Barras historicas usam o close da vela.
    const double close_now = closes_m30[n_m30 - 1];
-   const double price_now = is_current_bar ? _GetCurrentPrice(close_now) : close_now;
+   const double price_now = is_current_bar ? _PriceNowVelaCorrente(close_now) : close_now;
 
    const double price_7d_ago = closes_m30[0];   // s_swing_window barras atras ~ 7 dias
    if(price_now <= 0.0 || price_7d_ago <= 0.0) return VP_INVALID;
@@ -681,18 +712,28 @@ int OnCalculate(const int rates_total,
       const bool     is_current_bar = (i == rates_total - 1);
       const datetime t              = time[i];
 
-      //--- Gate de cadencia na vela corrente: entre amostras, reusa s_last_* ---
-      if(is_current_bar && s_last_sample_ts != 0
-         && (TimeCurrent() - s_last_sample_ts) < (datetime)kSampleIntervalSec)
+      //--- Gate na vela corrente: entre amostras, reusa s_last_*.
+      //--- Parciais ON (v1.3): amostra a cada barra M5 NOVA (6 parciais por
+      //--- barra M30); o teto kSampleIntervalSec segue como fallback de
+      //--- seguranca. OFF: gate 1800s original.
+      if(is_current_bar && s_last_sample_ts != 0)
       {
-         BufVP[i] = s_last_vp;
-         if(lines_active)
+         const bool within_gate =
+            (TimeCurrent() - s_last_sample_ts) < (datetime)kSampleIntervalSec;
+         const bool reuse = InpParciais_Enable
+            ? (within_gate && iTime(_Symbol, PERIOD_M5, 0) == s_last_lowtf_bar)
+            : within_gate;
+         if(reuse)
          {
-            BufMA_Start[i] = s_last_ma_start;
-            BufMA_Ref[i]   = s_last_ma_ref;
+            BufVP[i] = s_last_vp;
+            if(lines_active)
+            {
+               BufMA_Start[i] = s_last_ma_start;
+               BufMA_Ref[i]   = s_last_ma_ref;
+            }
+            if(vp_livre_active) BufVP_Livre[i] = s_last_vp_livre;
+            continue;
          }
-         if(vp_livre_active) BufVP_Livre[i] = s_last_vp_livre;
-         continue;
       }
 
       const int shift_m30 = can_use_arith_shift ? (rates_total - 1 - i) : -1;
@@ -774,6 +815,7 @@ int OnCalculate(const int rates_total,
          s_last_ma_ref    = lines_active    ? BufMA_Ref[i]   : EMPTY_VALUE;
          s_last_vp_livre  = vp_livre_active ? BufVP_Livre[i] : EMPTY_VALUE;
          s_last_sample_ts = TimeCurrent();
+         s_last_lowtf_bar = iTime(_Symbol, PERIOD_M5, 0);
       }
    }
 
